@@ -1,43 +1,88 @@
 # wallet.eluv.io
 
-A one-page Firebase site that is the Ory "Custom UI Base URL" for the prod Ory custom domain
-`ory.svc.eluv.io`. Several unrelated properties share that Ory domain (fox.eluv.io, vix.eluv.io,
-nba-cup.eluv.io, nba-summer.eluv.io, ...), and Ory allows only one base URL per custom domain, so this
-neutral page sits in front of them instead of one brand's site.
+A one-page Firebase site that is the **login UI URL** (`selfservice.flows.login.ui_url`) of the prod Ory
+project "Eluvio Media Wallet Auth". Ory sends browsers here when a social login (Apple, Google, Facebook)
+does not succeed, and the page sends them back to the site where they started.
 
-## What it does
+## Why it exists
 
-When a social login does not succeed (provider cancel or error, or an account-linking conflict), Ory
-redirects the browser to `https://wallet.eluv.io/oidc?flow=<id>`. The page:
+On a successful login, Ory redirects to the client's `return_to`. On anything else (provider cancel or
+error, account-linking conflict) it ignores `return_to` and redirects to the single login UI URL with
+`?flow=<id>`. The wallet's own `/oidc?flow=<id>` page can show that flow, but only on a site that shares
+the flow's cookie domain: reading a flow requires the browser's Ory CSRF cookie (an Ory API key does not
+work in its place).
 
-1. reads the login flow from `https://ory.svc.eluv.io/self-service/login/flows?id=<id>`;
-2. redirects to the flow's `return_to` (the property that started the login) with `flow=<id>` added, so
-   that property's `/oidc` page shows the message;
-3. otherwise redirects to the generic wallet, `https://wallet.contentfabric.io/`.
+Prod has many sites on several Ory custom domains: `ory.svc.contentfabric.io` (wallet, wallet.dev,
+wallet.preview), `ory.svc.eluv.io` (fox, vix, nba-cup, nba-summer, ...), `ory.svc.nba.com`, and others.
+The wallet picks its Ory domain from the site's registrable domain. A single fixed landing page can't
+serve all of them, so this page reads the flow and forwards the user.
 
-Reading the flow only works from an `eluv.io` page: Ory requires the browser's CSRF cookie, which lives
-on the `eluv.io` cookie domain. That is why this can't simply be `wallet.contentfabric.io`. Prod Ory's
-CORS already allows `https://wallet.eluv.io`. `return_to` was validated by Ory against
-`allowed_return_urls` when the flow was created, so this is not an open redirect.
+## What the page does
+
+1. Reads the flow from `https://ory.svc.eluv.io/self-service/<type>/flows?id=<id>`. This works for flows
+   started on any `*.eluv.io` site, because this page is on the same cookie domain. The type is login for
+   `/oidc`, or registration/verification/recovery/settings for `/ui/<type>`.
+2. If that works, it redirects to the flow's `return_to` with `flow=<id>` added (login flows only), so
+   that site's `/oidc` page shows the message.
+3. If it can't read the flow, it hands off to authd at
+   `https://as.glb.contentfabric.io/as/wlt/ory/login_ui?flow=<id>` (elv-master, `WltOryLoginUi`). authd
+   reads `contentfabric.io` flows by forwarding the browser's cookies, and redirects to that flow's
+   `return_to`. If it can't read the flow either, it redirects to `https://wallet.contentfabric.io/oidc`.
+4. With no `flow` at all, it redirects to `https://wallet.contentfabric.io/`.
+
+It only follows a `return_to` that Ory returned, and Ory validated that against `allowed_return_urls` when
+the flow was created, so this is not an open redirect.
+
+## Don't use Custom UI Base URLs for shared domains
+
+Ory's per-custom-domain "Custom UI Base URL" (Console → Branding → UI URLs) looks like the obvious fix, but
+it rewrites the **host of every redirect** on that domain, including successful logins: a Fox login
+returned to `wallet.eluv.io/oidc?next=…` instead of `fox.eluv.io`. Only use a base URL when every site on
+that Ory domain is the same host as the base URL. Today that's `epcrugby.tv` and `pasifika.plus` only.
+`ory.svc.eluv.io`, `ory.svc.nba.com` and `ory.svc.contentfabric.io` must have no base URL.
 
 ## Setup
 
-- Firebase project `production-web-apps-c0c6b`, hosting site `wallet-eluv-io`.
-- DNS: `wallet.eluv.io` per the Firebase custom-domain wizard (e.g. `CNAME wallet-eluv-io.web.app`).
-- Ory Console (prod project "Eluvio Media Wallet Auth") → Branding → UI URLs → custom domain
-  `ory.svc.eluv.io` → Custom UI Base URL `https://wallet.eluv.io`. Set this only after
-  `https://wallet.eluv.io` serves the page with a valid certificate.
-
-## Commands
+- Firebase project `production-web-apps-c0c6b`, hosting site `wallet-eluv-io`. `firebase.json` rewrites
+  every path to `index.html`.
+- DNS (eluv.io at GoDaddy): `CNAME wallet.eluv.io → wallet-eluv-io.web.app`.
+- Ory prod project `e17fa37c-1854-4ed6-b225-cf112d1d609c`: login `ui_url` = `https://wallet.eluv.io/oidc`.
 
 ```
 make deploy   # firebase deploy of this site
 make check    # page served on every path, no-cache header present
-make serve    # local preview (no Ory cookies locally, so it always falls back)
 ```
+
+Rollback: set the prod login `ui_url` back to `https://wallet.contentfabric.io/oidc`. Successful logins
+are unaffected either way; only failed logins pass through here.
 
 ## Testing
 
-On a property like `https://fox.eluv.io`, start Sign in with Apple and cancel at Apple. Expected:
-`wallet.eluv.io/oidc?flow=…` briefly, then `https://fox.eluv.io/oidc?flow=…&…` showing the cancel
-message.
+After any change here, in authd's `login_ui`, or in Ory's UI or return URLs, test **both success and
+failure** on each kind of site. Sign out first each time:
+
+| Site                                    | Google success, ends on    | Apple cancel, ends on                    |
+|-----------------------------------------|----------------------------|------------------------------------------|
+| `fox.eluv.io` (shared Ory domain)       | fox.eluv.io, signed in     | `fox.eluv.io/oidc?…&flow=…` with message |
+| `nba-cup.eluv.io` (second property)     | nba-cup.eluv.io, signed in | `nba-cup.eluv.io/oidc?…&flow=…`          |
+| `wallet.contentfabric.io`               | same site, signed in       | `wallet.contentfabric.io/oidc?flow=…`    |
+| `wallet.dev.contentfabric.io` (prod Ory) | same site, signed in      | `wallet.dev.contentfabric.io/oidc?…`     |
+| `epcrugby.tv` (has a base URL)          | epcrugby.tv, signed in     | `epcrugby.tv/oidc?flow=…`                |
+
+Quick check of where each Ory domain sends a failed login:
+
+```
+for d in eluv.io contentfabric.io epcrugby.tv; do
+  curl -s -o /dev/null -D - https://ory.svc.$d/self-service/login/browser | grep -i '^location'
+done
+```
+
+Test with a real sign-in click, not by opening an Ory URL directly. The wallet's `/oidc` page relies on
+the property it saved in session storage when the login started.
+
+## Known limits
+
+- `ory.svc.nba.com` flows can't be read by this page or authd, so they fall back to
+  `wallet.contentfabric.io/oidc`. NBA hosts currently have no social login.
+- Account-linking conflicts land on the right site, but the wallet's conflict page doesn't show the
+  "Confirm with <provider>" button for accounts without a password (wallet change, `OryLogin.jsx`).
