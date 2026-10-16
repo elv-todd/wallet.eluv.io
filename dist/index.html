@@ -4,18 +4,31 @@
 <title>Eluvio</title>
 <noscript><a href="https://wallet.contentfabric.io/">Continue to the Eluvio Media Wallet</a></noscript>
 <script>
-    // Ory sends cancel/error/conflict redirects for ory.svc.eluv.io here with ?flow=<id>.
-    // Send the user back to the site that started the flow (its return_to), else to the generic wallet.
+    // Prod Ory's login ui_url: Ory redirects browsers here (/oidc?flow=) when a social login doesn't succeed
+    // (cancel, error, account conflict). /ui/<type>?flow= paths are handled too, in case Ory sends them.
+    // Send the user back to the site that started the flow (its return_to); flows this page can't read go
+    // to authd, which can read contentfabric.io flows; with no flow at all, go to the generic wallet.
     // The flow can only be read from an eluv.io page: Ory requires the browser's CSRF cookie, which is
     // set on the eluv.io cookie domain.
     (async () => {
       const fallback = "https://wallet.contentfabric.io/";
+      const flowTypes = {
+        "/ui/registration": "registration",
+        "/ui/verification": "verification",
+        "/ui/recovery": "recovery",
+        "/ui/settings": "settings"
+      };
+      const path = location.pathname.replace(/\/+$/, "");
+      const flowType = flowTypes[path] || "login";
       const flow = new URLSearchParams(location.search).get("flow");
       let target = fallback;
       if(flow) {
+        // Not an eluv.io flow (or unreadable): hand off to authd, which reads contentfabric.io flows with the
+        // browser's cookies and otherwise falls back to the generic wallet
+        target = "https://as.glb.contentfabric.io/as/wlt/ory/login_ui?flow=" + encodeURIComponent(flow);
         try {
           const res = await fetch(
-            "https://ory.svc.eluv.io/self-service/login/flows?id=" + encodeURIComponent(flow),
+            "https://ory.svc.eluv.io/self-service/" + flowType + "/flows?id=" + encodeURIComponent(flow),
             { credentials: "include", headers: { Accept: "application/json" } }
           );
           if(res.ok) {
@@ -23,7 +36,11 @@
             // return_to was validated by Ory against allowed_return_urls when the flow was created
             const returnTo = data.return_to && new URL(data.return_to);
             if(returnTo && returnTo.protocol === "https:" && returnTo.origin !== location.origin) {
-              returnTo.searchParams.set("flow", flow);
+              // The wallet's /oidc page renders login flows only; for other flow types send the user back
+              // without the flow, so /oidc completes sign-in from the session like a normal success.
+              if(flowType === "login") {
+                returnTo.searchParams.set("flow", flow);
+              }
               target = returnTo.toString();
             }
           }
