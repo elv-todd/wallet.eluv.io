@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>Eluvio</title>
+<noscript><a href="https://wallet.contentfabric.io/">Continue to the Eluvio Media Wallet</a></noscript>
+<script>
+    // Ory sends cancel/error/conflict redirects for ory.svc.eluv.io here with ?flow=<id>.
+    // Send the user back to the site that started the flow (its return_to), else to the generic wallet.
+    // The flow can only be read from an eluv.io page: Ory requires the browser's CSRF cookie, which is
+    // set on the eluv.io cookie domain.
+    (async () => {
+      const fallback = "https://wallet.contentfabric.io/";
+      const flow = new URLSearchParams(location.search).get("flow");
+      let target = fallback;
+      if(flow) {
+        try {
+          const res = await fetch(
+            "https://ory.svc.eluv.io/self-service/login/flows?id=" + encodeURIComponent(flow),
+            { credentials: "include", headers: { Accept: "application/json" } }
+          );
+          if(res.ok) {
+            const data = await res.json();
+            // return_to was validated by Ory against allowed_return_urls when the flow was created
+            const returnTo = data.return_to && new URL(data.return_to);
+            if(returnTo && returnTo.protocol === "https:" && returnTo.origin !== location.origin) {
+              returnTo.searchParams.set("flow", flow);
+              target = returnTo.toString();
+            }
+          }
+        } catch(e) {
+          // fall through to the generic wallet
+        }
+      }
+      location.replace(target);
+    })();
+</script>
