@@ -47,6 +47,8 @@ that Ory domain is the same host as the base URL. Today that's `epcrugby.tv` and
   every path to `index.html`.
 - DNS (eluv.io at GoDaddy): `CNAME wallet.eluv.io → wallet-eluv-io.web.app`.
 - Ory prod project `e17fa37c-1854-4ed6-b225-cf112d1d609c`: login `ui_url` = `https://wallet.eluv.io/oidc`.
+  Keep the `/oidc` path: base-URL domains (epcrugby.tv, pasifika.plus) keep it and swap only the host, so
+  they land on the wallet's `/oidc` page.
 
 ```
 make deploy   # firebase deploy of this site
