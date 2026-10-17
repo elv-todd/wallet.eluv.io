@@ -82,6 +82,21 @@ done
 Test with a real sign-in click, not by opening an Ory URL directly. The wallet's `/oidc` page relies on
 the property it saved in session storage when the login started.
 
+## Adding another multi-site custom domain
+
+A custom domain with **one** site can just get a Custom UI Base URL equal to that site's host (like
+epcrugby.tv). A domain shared by **several** sites (e.g. `nba.com`) needs a reader page on that domain,
+added as another hop in the chain. The login `ui_url` stays `https://wallet.eluv.io/oidc`; never point it
+at the new page, because that would drop the other domains.
+
+1. New Firebase site with this same `index.html`, `ory.svc.eluv.io` replaced by `ory.svc.<domain>`; its
+   can't-read target stays authd.
+2. In this site's `index.html`, change the can't-read target from authd to
+   `https://wallet.<domain>/oidc?flow=…`.
+3. DNS on the domain owner's side: `wallet.<domain>` CNAME → the new Firebase site.
+4. Ory Console: the `ory.svc.<domain>` custom domain's CORS must allow `https://wallet.<domain>`.
+5. Run the test matrix above, plus a success and a cancel on a site of the new domain.
+
 ## Known limits
 
 - `ory.svc.nba.com` flows can't be read by this page or authd, so they fall back to
